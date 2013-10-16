@@ -46,6 +46,7 @@ QT_BEGIN_NAMESPACE
 class HandshakeRequest;
 class HandshakeResponse;
 class QTcpSocket;
+class QSslError;
 class QWebSocket;
 
 class QWebSocketPrivate:public QObject
@@ -53,10 +54,13 @@ class QWebSocketPrivate:public QObject
     Q_OBJECT
 
 public:
+
     explicit QWebSocketPrivate(const QString &origin,
                                QWebSocketProtocol::Version version,
                                QWebSocket * const pWebSocket,
+                               bool secure,
                                QObject *parent = 0);
+
     virtual ~QWebSocketPrivate();
 
     void abort();
@@ -70,6 +74,8 @@ public:
     QHostAddress peerAddress() const;
     QString peerName() const;
     quint16 peerPort() const;
+    quint16 defaultPort() const;
+
 #ifndef QT_NO_NETWORKPROXY
     QNetworkProxy proxy() const;
     void setProxy(const QNetworkProxy &networkProxy);
@@ -97,6 +103,11 @@ public:
     qint64 write(const QString &message);	//send data as text
     qint64 write(const QByteArray &data);	//send data as binary
 
+    // WSS methods
+    void disableCertificateValidation();
+    void enableCertificateValidation();
+    bool isSecure() const;
+
 public Q_SLOTS:
     void close(QWebSocketProtocol::CloseCode closeCode, QString reason);
     void open(const QUrl &url, bool mask);
@@ -109,6 +120,8 @@ private Q_SLOTS:
     void processClose(QWebSocketProtocol::CloseCode closeCode, QString closeReason);
     void processHandshake(QTcpSocket *pSocket);
     void processStateChanged(QAbstractSocket::SocketState socketState);
+    void processSslErrors(const QList<QSslError> & errors);
+    void processSocketEncrypted();
 
 private:
     Q_DISABLE_COPY(QWebSocketPrivate)
@@ -174,6 +187,8 @@ private:
     QTime m_pingTimer;
 
     DataProcessor m_dataProcessor;
+    bool m_secure;
+    bool m_validateServerCertificate;
 
     friend class QWebSocketServerPrivate;
 };

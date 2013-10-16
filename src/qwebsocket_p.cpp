@@ -23,6 +23,9 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
 #include "handshakeresponse_p.h"
 #include <QUrl>
 #include <QTcpSocket>
+#include <QSslSocket>
+#include <QSslError>
+#include <QSslCipher>
 #include <QByteArray>
 #include <QtEndian>
 #include <QCryptographicHash>
@@ -45,10 +48,9 @@ const quint64 FRAME_SIZE_IN_BYTES = 512 * 512 * 2;	//maximum size of a frame whe
 /*!
     \internal
 */
-QWebSocketPrivate::QWebSocketPrivate(const QString &origin, QWebSocketProtocol::Version version, QWebSocket *pWebSocket, QObject *parent) :
+QWebSocketPrivate::QWebSocketPrivate(const QString &origin, QWebSocketProtocol::Version version, QWebSocket *pWebSocket, bool secure, QObject *parent) :
     QObject(parent),
     q_ptr(pWebSocket),
-    m_pSocket(new QTcpSocket(this)),
     m_errorString(),
     m_version(version),
     m_resourceName(),
@@ -62,9 +64,17 @@ QWebSocketPrivate::QWebSocketPrivate(const QString &origin, QWebSocketProtocol::
     m_isClosingHandshakeSent(false),
     m_isClosingHandshakeReceived(false),
     m_pingTimer(),
-    m_dataProcessor()
+    m_dataProcessor(),
+    m_secure(secure)
 {
     Q_ASSERT(pWebSocket != 0);
+    if(secure) {
+        m_pSocket = new QSslSocket(this);
+    }
+    else {
+        m_pSocket = new QTcpSocket(this);
+    }
+
     makeConnections(m_pSocket);
     qsrand(static_cast<uint>(QDateTime::currentMSecsSinceEpoch()));
 }
@@ -259,7 +269,12 @@ void QWebSocketPrivate::open(const QUrl &url, bool mask)
 
     setSocketState(QAbstractSocket::ConnectingState);
 
-    m_pSocket->connectToHost(url.host(), url.port(80));
+    if(m_secure) {
+        qobject_cast<QSslSocket*>(m_pSocket)->connectToHostEncrypted(url.host(), url.port(defaultPort()));
+    }
+    else {
+        m_pSocket->connectToHost(url.host(), url.port(defaultPort()));
+    }
 }
 
 /*!
@@ -357,6 +372,11 @@ void QWebSocketPrivate::makeConnections(const QTcpSocket *pTcpSocket)
     connect(pTcpSocket, SIGNAL(stateChanged(QAbstractSocket::SocketState)), this, SLOT(processStateChanged(QAbstractSocket::SocketState)));
     connect(pTcpSocket, SIGNAL(readyRead()), this, SLOT(processData()));
 
+    if(m_secure) {
+        connect(pTcpSocket, SIGNAL(encrypted()), this, SLOT(processSocketEncrypted()));
+        connect(m_pSocket, SIGNAL(sslErrors(const QList<QSslError>&)),this, SLOT(processSslErrors(const QList<QSslError>&)));
+    }
+
     connect(&m_dataProcessor, SIGNAL(textFrameReceived(QString,bool)), q, SIGNAL(textFrameReceived(QString,bool)));
     connect(&m_dataProcessor, SIGNAL(binaryFrameReceived(QByteArray,bool)), q, SIGNAL(binaryFrameReceived(QByteArray,bool)));
     connect(&m_dataProcessor, SIGNAL(binaryMessageReceived(QByteArray)), q, SIGNAL(binaryMessageReceived(QByteArray)));
@@ -385,6 +405,12 @@ void QWebSocketPrivate::releaseConnections(const QTcpSocket *pTcpSocket)
         //catched signals
         disconnect(pTcpSocket, SIGNAL(stateChanged(QAbstractSocket::SocketState)), this, SLOT(processStateChanged(QAbstractSocket::SocketState)));
         disconnect(pTcpSocket, SIGNAL(readyRead()), this, SLOT(processData()));
+
+        if(m_secure) {
+            disconnect(pTcpSocket, SIGNAL(encrypted()), this, SLOT(processSocketEncrypted()));
+            disconnect(m_pSocket, SIGNAL(sslErrors(const QList<QSslError>&)),this, SLOT(processSslErrors(const QList<QSslError>&)));
+
+        }
     }
     disconnect(&m_dataProcessor, SIGNAL(pingReceived(QByteArray)), this, SLOT(processPing(QByteArray)));
     disconnect(&m_dataProcessor, SIGNAL(pongReceived(QByteArray)), this, SLOT(processPong(QByteArray)));
@@ -801,7 +827,8 @@ void QWebSocketPrivate::processStateChanged(QAbstractSocket::SocketState socketS
         if (webSocketState == QAbstractSocket::ConnectingState)
         {
             m_key = generateKey();
-            QString handshake = createHandShakeRequest(m_resourceName, m_requestUrl.host() % ":" % QString::number(m_requestUrl.port(80)), origin(), "", "", m_key);
+            QString handshake = createHandShakeRequest(m_resourceName, m_requestUrl.host() % ":" % QString::number(m_requestUrl.port(defaultPort())), origin(), "", "", m_key);
+            qDebug() << "HTTP HANDSHAKE: " << handshake;
             m_pSocket->write(handshake.toLatin1());
         }
         break;
@@ -1103,6 +1130,65 @@ QVariant QWebSocketPrivate::socketOption(QAbstractSocket::SocketOption option)
 bool QWebSocketPrivate::isValid() const
 {
     return m_pSocket->isValid();
+}
+
+/**
+ * This method returns the default based on the protocol prefix
+ * i.e., 80 for ws:// and 443 for wss://
+ *
+ * @brief defautPort Default port based on protocol scheme (ws vs wss)
+ * @return
+ */
+quint16 QWebSocketPrivate::defaultPort() const {
+    if(m_secure) {
+        return 443;
+    }
+    else {
+        return 80;
+    }
+}
+
+void QWebSocketPrivate::processSslErrors(const QList<QSslError> & errors) {
+
+    Q_UNUSED(errors);
+
+    qDebug() << "WEBSOCKET SSL HANDSHAKE ERRORS:";
+    foreach(QSslError err, errors) {
+        qDebug() << err.errorString() << "\n" << err.certificate().toText();
+    }
+
+    //QList<QSslError> expectedSslErrors;
+    //expectedSslErrors.append(QSslError::SelfSignedCertificate);
+    //expectedSslErrors.append(QSslError::CertificateUntrusted);
+    //m_pSocket->ignoreSslErrors(expectedSslErrors);
+
+    if(!m_validateServerCertificate) {
+        qobject_cast<QSslSocket*>(m_pSocket)->ignoreSslErrors();
+    }
+
+    qDebug() << "WEBSOCKET SSL HANDSHAKE ERRORS IGNORED";
+}
+
+void QWebSocketPrivate::processSocketEncrypted() {
+    qDebug() << "WEBSOCKET SSL ENCRYPTED";
+
+    QSslCipher ciph = qobject_cast<QSslSocket*>(m_pSocket)->sessionCipher();
+    QString cipher = QString("%1, %2 (%3/%4)").arg(ciph.authenticationMethod())
+                          .arg(ciph.name()).arg(ciph.usedBits()).arg(ciph.supportedBits());;
+
+    qDebug() << "WEBSOCKET SSL CIPHER: " << cipher;
+}
+
+void QWebSocketPrivate::disableCertificateValidation() {
+    m_validateServerCertificate = false;
+}
+
+void QWebSocketPrivate::enableCertificateValidation() {
+    m_validateServerCertificate = true;
+}
+
+bool QWebSocketPrivate::isSecure() const {
+    return m_secure;
 }
 
 QT_END_NAMESPACE

@@ -40,7 +40,14 @@ class Q_WEBSOCKETS_EXPORT QWebSocket:public QObject
     Q_OBJECT
 
 public:
-    explicit QWebSocket(const QString &origin = QString(), QWebSocketProtocol::Version version = QWebSocketProtocol::V_LATEST, QObject *parent = 0);
+    explicit QWebSocket(const QString &origin = QString(),
+                        QWebSocketProtocol::Version version = QWebSocketProtocol::V_LATEST,
+                        QObject *parent = 0);
+
+    explicit QWebSocket(bool secure, const QString &origin = QString(),
+                        QWebSocketProtocol::Version version = QWebSocketProtocol::V_LATEST,
+                        QObject *parent = 0);
+
     virtual ~QWebSocket();
 
     void abort();
@@ -54,12 +61,18 @@ public:
     QHostAddress peerAddress() const;
     QString peerName() const;
     quint16 peerPort() const;
+
 #ifndef QT_NO_NETWORKPROXY
     QNetworkProxy proxy() const;
     void setProxy(const QNetworkProxy &networkProxy);
 #endif
     qint64 readBufferSize() const;
     void setReadBufferSize(qint64 size);
+
+    // WSS methods
+    void disableCertificateValidation();
+    void enableCertificateValidation();
+    bool isSecure() const;
 
     void resume();
     void setPauseMode(QAbstractSocket::PauseModes pauseMode);
@@ -109,6 +122,7 @@ private:
     Q_DECLARE_PRIVATE(QWebSocket)
     QWebSocket(QTcpSocket *pTcpSocket, QWebSocketProtocol::Version version, QObject *parent = 0);
     QWebSocketPrivate * const d_ptr;
+    bool _secure;
 };
 
 QT_END_NAMESPACE

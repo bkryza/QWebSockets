@@ -188,7 +188,22 @@ const quint64 FRAME_SIZE_IN_BYTES = 512 * 512 * 2;	//maximum size of a frame whe
  */
 QWebSocket::QWebSocket(const QString &origin, QWebSocketProtocol::Version version, QObject *parent) :
     QObject(parent),
-    d_ptr(new QWebSocketPrivate(origin, version, this, this))
+    d_ptr(new QWebSocketPrivate(origin, version, this, false, this)),
+    _secure(false)
+{
+}
+
+/*!
+ * \brief Creates a new QWebSocket with the given \a origin, the \a version of the protocol to use and \a parent.
+ *
+ * The \a origin of the client is as specified in http://tools.ietf.org/html/rfc6454.
+ * (The \a origin is not required for non-web browser clients (see RFC 6455)).
+ * \note Currently only V13 (RFC 6455) is supported
+ */
+QWebSocket::QWebSocket(bool secure, const QString &origin, QWebSocketProtocol::Version version, QObject *parent) :
+    QObject(parent),
+    d_ptr(new QWebSocketPrivate(origin, version, this, secure, this)),
+    _secure(secure)
 {
 }
 
@@ -198,7 +213,6 @@ QWebSocket::QWebSocket(const QString &origin, QWebSocketProtocol::Version versio
 QWebSocket::~QWebSocket()
 {
     delete d_ptr;
-    //d_ptr = 0;
 }
 
 /*!
@@ -587,6 +601,20 @@ bool QWebSocket::isValid() const
 {
     Q_D(const QWebSocket);
     return d->isValid();
+}
+
+void QWebSocket::disableCertificateValidation() {
+    Q_D(QWebSocket);
+    return d->disableCertificateValidation();
+}
+
+void QWebSocket::enableCertificateValidation() {
+    Q_D(QWebSocket);
+    return d->enableCertificateValidation();
+}
+
+bool QWebSocket::isSecure() const {
+    return _secure;
 }
 
 QT_END_NAMESPACE
